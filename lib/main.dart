@@ -12,59 +12,87 @@ const storageKey = 'task_status_reminder_tasks_v1';
 const developerEmail = 'fastunlocked2017@gmail.com';
 
 final notifications = FlutterLocalNotificationsPlugin();
+Future<void>? _notificationSetupFuture;
+bool _notificationsReady = false;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await setupNotifications();
   runApp(const TaskStatusReminderApp());
+  // لا ننتظر تهيئة الإشعارات قبل فتح الواجهة حتى لا تظهر شاشة بيضاء على بعض الأجهزة.
+  setupNotifications();
 }
 
-Future<void> setupNotifications() async {
-  tz.initializeTimeZones();
+Future<void> setupNotifications() {
+  _notificationSetupFuture ??= _setupNotificationsSafely();
+  return _notificationSetupFuture!;
+}
+
+Future<void> _setupNotificationsSafely() async {
   try {
-    tz.setLocalLocation(tz.getLocation('Asia/Amman'));
-  } catch (_) {
-    // If the timezone database changes, the default local location is still usable.
+    tz.initializeTimeZones();
+    try {
+      tz.setLocalLocation(tz.getLocation('Asia/Amman'));
+    } catch (_) {
+      // إذا اختلف اسم المنطقة الزمنية، نستخدم القيمة الافتراضية بدل تعطيل التطبيق.
+    }
+
+    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const settings = InitializationSettings(android: android);
+    await notifications.initialize(settings).timeout(const Duration(seconds: 5));
+
+    await notifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+
+    _notificationsReady = true;
+  } catch (error) {
+    _notificationsReady = false;
+    debugPrint('Notifications disabled: $error');
   }
-
-  const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const settings = InitializationSettings(android: android);
-  await notifications.initialize(settings);
-
-  await notifications
-      .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>()
-      ?.requestNotificationsPermission();
 }
 
 Future<void> scheduleTaskNotification(AppTask task) async {
-  if (task.status == TaskStatus.done || task.reminderAt == null) return;
-  final when = task.reminderAt!;
-  if (!when.isAfter(DateTime.now())) return;
+  try {
+    await setupNotifications();
+    if (!_notificationsReady) return;
+    if (task.status == TaskStatus.done || task.reminderAt == null) return;
+    final when = task.reminderAt!;
+    if (!when.isAfter(DateTime.now())) return;
 
-  await notifications.zonedSchedule(
-    task.notificationId,
-    'تذكير مهمة',
-    '${task.title} - ${task.status.label}',
-    tz.TZDateTime.from(when, tz.local),
-    const NotificationDetails(
-      android: AndroidNotificationDetails(
-        'tasks_channel',
-        'تذكيرات المهام',
-        channelDescription: 'إشعارات تذكير بتاريخ ووقت المهمة',
-        importance: Importance.high,
-        priority: Priority.high,
+    await notifications.zonedSchedule(
+      task.notificationId,
+      'تذكير مهمة',
+      '${task.title} - ${task.status.label}',
+      tz.TZDateTime.from(when, tz.local),
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          'tasks_channel',
+          'تذكيرات المهام',
+          channelDescription: 'إشعارات تذكير بتاريخ ووقت المهمة',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
       ),
-    ),
-    androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-    uiLocalNotificationDateInterpretation:
-        UILocalNotificationDateInterpretation.absoluteTime,
-    payload: task.id,
-  );
+      androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+      uiLocalNotificationDateInterpretation:
+          UILocalNotificationDateInterpretation.absoluteTime,
+      payload: task.id,
+    );
+  } catch (error) {
+    debugPrint('Schedule notification failed: $error');
+  }
 }
 
 Future<void> cancelTaskNotification(AppTask task) async {
-  await notifications.cancel(task.notificationId);
+  try {
+    await setupNotifications();
+    if (_notificationsReady) {
+      await notifications.cancel(task.notificationId);
+    }
+  } catch (error) {
+    debugPrint('Cancel notification failed: $error');
+  }
 }
 
 class TaskStatusReminderApp extends StatelessWidget {
@@ -207,25 +235,38 @@ class _TasksHomeState extends State<TasksHome> {
   }
 
   Future<void> loadTasks() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(storageKey);
-    if (raw != null && raw.isNotEmpty) {
-      final decoded = jsonDecode(raw) as List<dynamic>;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(storageKey);
+      if (raw != null && raw.isNotEmpty) {
+        final decoded = jsonDecode(raw) as List<dynamic>;
+        tasks
+          ..clear()
+          ..addAll(decoded.map((item) => AppTask.fromJson(item)));
+      } else {
+        tasks.addAll([
+          AppTask(
+            id: DateTime.now().microsecondsSinceEpoch.toString(),
+            title: 'مراجعة المهام اليومية',
+            note: 'مثال سريع يمكن تعديله أو حذفه.',
+            status: TaskStatus.requiredTask,
+            createdAt: DateTime.now(),
+          ),
+        ]);
+      }
+    } catch (error) {
+      debugPrint('Load tasks failed: $error');
       tasks
         ..clear()
-        ..addAll(decoded.map((item) => AppTask.fromJson(item)));
-    } else {
-      tasks.addAll([
-        AppTask(
+        ..add(AppTask(
           id: DateTime.now().microsecondsSinceEpoch.toString(),
-          title: 'مراجعة المهام اليومية',
-          note: 'مثال سريع يمكن تعديله أو حذفه.',
+          title: 'مهمة جديدة',
+          note: 'يمكنك تعديل هذه المهمة أو حذفها.',
           status: TaskStatus.requiredTask,
           createdAt: DateTime.now(),
-        ),
-      ]);
+        ));
     }
-    setState(() => loading = false);
+    if (mounted) setState(() => loading = false);
   }
 
   Future<void> saveTasks() async {
