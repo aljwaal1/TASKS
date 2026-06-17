@@ -1,7 +1,9 @@
 # رابط تحميل التطبيق
 
-بعد نجاح البناء على GitHub سيظهر ملف APK هنا:
+بعد نجاح البناء، حمل ملف APK مباشرة من هذا الرابط:
 
-`apk/task-status-reminder.apk`
+https://github.com/aljwaal1/TASKS/raw/main/apk/task-status-reminder.apk
 
-وسيتم تحديث هذا الملف تلقائيًا برابط التحميل المباشر.
+اسم الملف:
+
+apk/task-status-reminder.apk
