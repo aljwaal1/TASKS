@@ -425,8 +425,6 @@ class _TasksHomeState extends State<TasksHome> {
   SortMode sortMode = SortMode.reminderDate;
   int tab = 0;
   bool loading = true;
-  String searchQuery = '';
-  bool showSearch = false;
 
   @override
   void initState() {
@@ -572,11 +570,7 @@ class _TasksHomeState extends State<TasksHome> {
 
   List<AppTask> get visibleTasks {
     var list = tasks.where((t) {
-      final matchFilter = filter == null || t.status == filter;
-      final matchSearch = searchQuery.isEmpty ||
-          t.title.contains(searchQuery) ||
-          t.note.contains(searchQuery);
-      return matchFilter && matchSearch;
+      return filter == null || t.status == filter;
     }).toList();
 
     switch (sortMode) {
@@ -610,16 +604,9 @@ class _TasksHomeState extends State<TasksHome> {
         allTasks: tasks,
         filter: filter,
         sortMode: sortMode,
-        showSearch: showSearch,
-        searchQuery: searchQuery,
         doneCount: doneCount,
         onFilter: (v) => setState(() => filter = v),
         onSortMode: (v) => setState(() => sortMode = v),
-        onSearchToggle: () => setState(() {
-          showSearch = !showSearch;
-          if (!showSearch) searchQuery = '';
-        }),
-        onSearchChanged: (v) => setState(() => searchQuery = v),
         onAdd: () => openTaskSheet(),
         onEdit: (t) => openTaskSheet(task: t),
         onDelete: deleteTask,
@@ -722,13 +709,9 @@ class _TasksPage extends StatelessWidget {
     required this.allTasks,
     required this.filter,
     required this.sortMode,
-    required this.showSearch,
-    required this.searchQuery,
     required this.doneCount,
     required this.onFilter,
     required this.onSortMode,
-    required this.onSearchToggle,
-    required this.onSearchChanged,
     required this.onAdd,
     required this.onEdit,
     required this.onDelete,
@@ -741,13 +724,9 @@ class _TasksPage extends StatelessWidget {
   final List<AppTask> allTasks;
   final TaskStatus? filter;
   final SortMode sortMode;
-  final bool showSearch;
-  final String searchQuery;
   final int doneCount;
   final ValueChanged<TaskStatus?> onFilter;
   final ValueChanged<SortMode> onSortMode;
-  final VoidCallback onSearchToggle;
-  final ValueChanged<String> onSearchChanged;
   final VoidCallback onAdd;
   final ValueChanged<AppTask> onEdit;
   final ValueChanged<AppTask> onDelete;
@@ -768,26 +747,6 @@ class _TasksPage extends StatelessWidget {
           ),
         ),
 
-        // ── شريط البحث ──
-        if (showSearch)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: TextField(
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText: 'ابحث عن مهمة...',
-                  prefixIcon: const Icon(Icons.search_rounded),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.close_rounded),
-                    onPressed: onSearchToggle,
-                  ),
-                ),
-                onChanged: onSearchChanged,
-              ),
-            ),
-          ),
-
         // ── شريط الفلاتر + الترتيب ──
         SliverToBoxAdapter(
           child: Padding(
@@ -795,11 +754,9 @@ class _TasksPage extends StatelessWidget {
             child: _FilterBar(
               filter: filter,
               sortMode: sortMode,
-              showSearch: showSearch,
               doneCount: doneCount,
               onFilter: onFilter,
               onSortMode: onSortMode,
-              onSearchToggle: onSearchToggle,
               onDeleteDone: onDeleteDone,
               onTestNotification: onTestNotification,
             ),
@@ -813,7 +770,7 @@ class _TasksPage extends StatelessWidget {
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: _EmptyState(onAdd: onAdd, hasSearch: searchQuery.isNotEmpty),
+              child: _EmptyState(onAdd: onAdd),
             ),
           )
         else
@@ -843,22 +800,18 @@ class _FilterBar extends StatelessWidget {
   const _FilterBar({
     required this.filter,
     required this.sortMode,
-    required this.showSearch,
     required this.doneCount,
     required this.onFilter,
     required this.onSortMode,
-    required this.onSearchToggle,
     required this.onDeleteDone,
     required this.onTestNotification,
   });
 
   final TaskStatus? filter;
   final SortMode sortMode;
-  final bool showSearch;
   final int doneCount;
   final ValueChanged<TaskStatus?> onFilter;
   final ValueChanged<SortMode> onSortMode;
-  final VoidCallback onSearchToggle;
   final VoidCallback? onDeleteDone;
   final VoidCallback onTestNotification;
 
@@ -901,11 +854,6 @@ class _FilterBar extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _ToolIcon(
-                  icon: showSearch ? Icons.search_off_rounded : Icons.search_rounded,
-                  tooltip: 'بحث',
-                  onTap: onSearchToggle,
-                ),
                 _ToolIcon(
                   icon: Icons.notifications_active_outlined,
                   tooltip: 'اختبار الإشعار',
@@ -1299,229 +1247,266 @@ class _TaskCard extends StatelessWidget {
   final VoidCallback onDelete;
   final ValueChanged<TaskStatus> onStatus;
 
+  Future<void> _openStatusPicker(BuildContext context) async {
+    final result = await showModalBottomSheet<TaskStatus>(
+      context: context,
+      builder: (_) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE2E8D8),
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
+              ),
+              Text(
+                task.title,
+                style: const TextStyle(
+                    fontSize: 16, fontWeight: FontWeight.w800),
+              ),
+              const SizedBox(height: 4),
+              const Text('اختر الحالة الجديدة',
+                  style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13)),
+              const SizedBox(height: 12),
+              for (final s in TaskStatus.values)
+                ListTile(
+                  leading: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: s.color.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(s.icon, color: s.color, size: 20),
+                  ),
+                  title: Text(s.label,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
+                  trailing: task.status == s
+                      ? Icon(Icons.check_circle_rounded, color: s.color)
+                      : null,
+                  selected: task.status == s,
+                  selectedTileColor: s.color.withValues(alpha: 0.06),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  onTap: () => Navigator.pop(context, s),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (result != null && result != task.status) onStatus(result);
+  }
+
   @override
   Widget build(BuildContext context) {
     final statusColor = task.status.color;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(20),
-        border: Border(
-          right: BorderSide(color: statusColor, width: 4),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── الصف العلوي: الأيقونة + العنوان + القائمة ──
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // أيقونة الحالة
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(task.status.icon, color: statusColor, size: 20),
-                ),
-                const SizedBox(width: 10),
-                // العنوان والأولوية
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        task.title,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          decoration: task.status == TaskStatus.done
-                              ? TextDecoration.lineThrough
-                              : null,
-                          color: task.status == TaskStatus.done
-                              ? const Color(0xFF94A3B8)
-                              : const Color(0xFF1E293B),
-                        ),
-                      ),
-                      if (task.priority > 0) ...[
-                        const SizedBox(height: 2),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 7, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: task.priority == 2
-                                ? const Color(0xFFDC2626).withValues(alpha: 0.1)
-                                : const Color(0xFFF97316).withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(99),
-                          ),
-                          child: Text(
-                            task.priority == 2 ? '⚡ عاجل' : '★ مهم',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: task.priority == 2
-                                  ? const Color(0xFFDC2626)
-                                  : const Color(0xFFF97316),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                // قائمة الخيارات
-                PopupMenuButton<String>(
-                  onSelected: (v) {
-                    if (v == 'edit') onEdit();
-                    if (v == 'delete') onDelete();
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                      value: 'edit',
-                      child: Row(children: [
-                        Icon(Icons.edit_rounded, size: 18),
-                        SizedBox(width: 8),
-                        Text('تعديل'),
-                      ]),
-                    ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Row(children: [
-                        Icon(Icons.delete_rounded,
-                            size: 18, color: Color(0xFFDC2626)),
-                        SizedBox(width: 8),
-                        Text('حذف',
-                            style: TextStyle(color: Color(0xFFDC2626))),
-                      ]),
-                    ),
-                  ],
-                  icon: const Icon(Icons.more_vert_rounded,
-                      color: Color(0xFF94A3B8)),
-                ),
-              ],
+        onTap: () => _openStatusPicker(context),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border(
+              right: BorderSide(color: statusColor, width: 4),
             ),
-
-            // ── الملاحظة ──
-            if (task.note.trim().isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                task.note,
-                style: const TextStyle(
-                  color: Color(0xFF64748B),
-                  fontSize: 13,
-                  height: 1.4,
-                ),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
               ),
             ],
-
-            const SizedBox(height: 10),
-
-            // ── شريط المعلومات: التاريخ ──
-            if (task.reminderAt != null)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: task.isOverdue
-                      ? const Color(0xFFDC2626).withValues(alpha: 0.08)
-                      : const Color(0xFF15803D).withValues(alpha: 0.07),
-                  borderRadius: BorderRadius.circular(99),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── الصف العلوي: الأيقونة + العنوان + القائمة ──
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      task.isOverdue
-                          ? Icons.warning_amber_rounded
-                          : Icons.alarm_rounded,
-                      size: 13,
-                      color: task.isOverdue
-                          ? const Color(0xFFDC2626)
-                          : const Color(0xFF15803D),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      formatDateTime(task.reminderAt!),
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                        color: task.isOverdue
-                            ? const Color(0xFFDC2626)
-                            : const Color(0xFF15803D),
+                    // أيقونة الحالة
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: statusColor.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(12),
                       ),
+                      child: Icon(task.status.icon,
+                          color: statusColor, size: 20),
                     ),
-                  ],
-                ),
-              ),
-
-            const SizedBox(height: 12),
-
-            // ── أزرار تغيير الحالة — تتوزع بالتساوي بدون تمرير ──
-            Row(
-              children: TaskStatus.values.map((s) {
-                final isActive = task.status == s;
-                return Expanded(
-                  child: Padding(
-                    padding: EdgeInsetsDirectional.only(
-                      end: s != TaskStatus.done ? 6 : 0,
-                    ),
-                    child: GestureDetector(
-                      onTap: isActive ? null : () => onStatus(s),
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 180),
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                        decoration: BoxDecoration(
-                          color: isActive
-                              ? s.color
-                              : s.color.withValues(alpha: 0.07),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: isActive
-                                ? s.color
-                                : s.color.withValues(alpha: 0.2),
-                          ),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              s.icon,
-                              size: 16,
-                              color: isActive ? Colors.white : s.color,
+                    const SizedBox(width: 10),
+                    // العنوان والأولوية
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            task.title,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                              decoration: task.status == TaskStatus.done
+                                  ? TextDecoration.lineThrough
+                                  : null,
+                              color: task.status == TaskStatus.done
+                                  ? const Color(0xFF94A3B8)
+                                  : const Color(0xFF1E293B),
                             ),
-                            const SizedBox(height: 3),
-                            Text(
-                              s.label,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w800,
-                                color: isActive ? Colors.white : s.color,
+                          ),
+                          if (task.priority > 0) ...[
+                            const SizedBox(height: 2),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: task.priority == 2
+                                    ? const Color(0xFFDC2626)
+                                        .withValues(alpha: 0.1)
+                                    : const Color(0xFFF97316)
+                                        .withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: Text(
+                                task.priority == 2 ? '⚡ عاجل' : '★ مهم',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: task.priority == 2
+                                      ? const Color(0xFFDC2626)
+                                      : const Color(0xFFF97316),
+                                ),
                               ),
                             ),
                           ],
-                        ),
+                        ],
                       ),
                     ),
+                    // قائمة الخيارات
+                    PopupMenuButton<String>(
+                      onSelected: (v) {
+                        if (v == 'edit') onEdit();
+                        if (v == 'delete') onDelete();
+                      },
+                      itemBuilder: (_) => [
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Row(children: [
+                            Icon(Icons.edit_rounded, size: 18),
+                            SizedBox(width: 8),
+                            Text('تعديل'),
+                          ]),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Row(children: [
+                            Icon(Icons.delete_rounded,
+                                size: 18, color: Color(0xFFDC2626)),
+                            SizedBox(width: 8),
+                            Text('حذف',
+                                style: TextStyle(color: Color(0xFFDC2626))),
+                          ]),
+                        ),
+                      ],
+                      icon: const Icon(Icons.more_vert_rounded,
+                          color: Color(0xFF94A3B8)),
+                    ),
+                  ],
+                ),
+
+                // ── الملاحظة ──
+                if (task.note.trim().isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    task.note,
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 13,
+                      height: 1.4,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                );
-              }).toList(),
+                ],
+
+                const SizedBox(height: 10),
+
+                // ── شريط المعلومات: التاريخ ──
+                if (task.reminderAt != null)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: task.isOverdue
+                          ? const Color(0xFFDC2626).withValues(alpha: 0.08)
+                          : const Color(0xFF15803D).withValues(alpha: 0.07),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          task.isOverdue
+                              ? Icons.warning_amber_rounded
+                              : Icons.alarm_rounded,
+                          size: 13,
+                          color: task.isOverdue
+                              ? const Color(0xFFDC2626)
+                              : const Color(0xFF15803D),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          formatDateTime(task.reminderAt!),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: task.isOverdue
+                                ? const Color(0xFFDC2626)
+                                : const Color(0xFF15803D),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                const SizedBox(height: 4),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'اضغط لتغيير الحالة',
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: const Color(0xFF94A3B8).withValues(alpha: 0.7),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Icon(Icons.touch_app_rounded,
+                          size: 12,
+                          color: const Color(0xFF94A3B8).withValues(alpha: 0.7)),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -1532,10 +1517,9 @@ class _TaskCard extends StatelessWidget {
 // EMPTY STATE
 // ═══════════════════════════════════════════════════════════════════════════════
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onAdd, required this.hasSearch});
+  const _EmptyState({required this.onAdd});
 
   final VoidCallback onAdd;
-  final bool hasSearch;
 
   @override
   Widget build(BuildContext context) {
@@ -1555,36 +1539,32 @@ class _EmptyState extends StatelessWidget {
               color: const Color(0xFF15803D).withValues(alpha: 0.08),
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              hasSearch ? Icons.search_off_rounded : Icons.task_alt_rounded,
+            child: const Icon(
+              Icons.task_alt_rounded,
               size: 44,
-              color: const Color(0xFF15803D),
+              color: Color(0xFF15803D),
             ),
           ),
           const SizedBox(height: 16),
-          Text(
-            hasSearch ? 'لا توجد نتائج' : 'لا توجد مهام بعد',
-            style: const TextStyle(
+          const Text(
+            'لا توجد مهام بعد',
+            style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.w900,
                 color: Color(0xFF1E293B)),
           ),
           const SizedBox(height: 6),
-          Text(
-            hasSearch
-                ? 'جرب كلمة بحث مختلفة'
-                : 'أضف مهمتك الأولى وابدأ بالتنظيم',
-            style: const TextStyle(color: Color(0xFF94A3B8)),
+          const Text(
+            'أضف مهمتك الأولى وابدأ بالتنظيم',
+            style: TextStyle(color: Color(0xFF94A3B8)),
             textAlign: TextAlign.center,
           ),
-          if (!hasSearch) ...[
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('إضافة مهمة'),
-            ),
-          ],
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('إضافة مهمة'),
+          ),
         ],
       ),
     );
