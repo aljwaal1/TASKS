@@ -47,16 +47,26 @@ Future<void> setupNotifications() async {
     } catch (_) {}
   }
 
-  // الخطوة 3: تهيئة المكتبة — هذه الأهم، لو فشلت نوقف هنا
+  // الخطوة 3: تهيئة المكتبة
   try {
-    const android = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const android = AndroidInitializationSettings('@drawable/app_icon');
     await _notifications.initialize(
       const InitializationSettings(android: android),
       onDidReceiveNotificationResponse: _onNotificationTap,
       onDidReceiveBackgroundNotificationResponse: _onNotificationTap,
     );
-  } catch (_) {
-    return; // فشل حقيقي، لا فائدة من المتابعة
+  } catch (e) {
+    // نحاول بأيقونة بديلة
+    try {
+      const android = AndroidInitializationSettings('ic_launcher');
+      await _notifications.initialize(
+        const InitializationSettings(android: android),
+        onDidReceiveNotificationResponse: _onNotificationTap,
+        onDidReceiveBackgroundNotificationResponse: _onNotificationTap,
+      );
+    } catch (_) {
+      return; // فشل كامل
+    }
   }
 
   // الخطوة 4: إنشاء القنوات وطلب الأذونات — كل عملية مستقلة
@@ -128,7 +138,7 @@ Future<void> showKeepAliveNotification(int activeTaskCount) async {
         autoCancel: false,
         playSound: false,
         enableVibration: false,
-        icon: '@mipmap/ic_launcher',
+        icon: '@drawable/app_icon',
         showWhen: false,
         // foregroundService يجعل Android Go يعامله كخدمة حقيقية لا تُوقَف
         usesChronometer: false,
@@ -178,7 +188,7 @@ Future<void> showTestNotification() async {
           priority: Priority.high,
           playSound: true,
           enableVibration: true,
-          icon: '@mipmap/ic_launcher',
+          icon: '@drawable/app_icon',
         ),
       ),
     );
@@ -207,8 +217,8 @@ Future<void> scheduleTaskNotification(AppTask task) async {
       priority: Priority.high,
       playSound: true,
       enableVibration: true,
-      icon: '@mipmap/ic_launcher',
-      largeIcon: const DrawableResourceAndroidBitmap('@mipmap/ic_launcher'),
+      icon: '@drawable/app_icon',
+      largeIcon: const DrawableResourceAndroidBitmap('@drawable/app_icon'),
       styleInformation: BigTextStyleInformation(
         task.note.isNotEmpty ? task.note : 'لا تنسَ متابعة المهمة في وقتها.',
         contentTitle: '🔔 تذكير: ${task.title}',
