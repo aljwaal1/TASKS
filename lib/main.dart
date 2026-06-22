@@ -19,14 +19,25 @@ final FlutterLocalNotificationsPlugin _notifications =
     FlutterLocalNotificationsPlugin();
 bool _notificationsReady = false;
 
-const _channelId = 'tasks_channel_v3';
+// قناة التذكير عند حلول الوقت — صوت تنبيه مميز
+const _channelId = 'tasks_channel_v4';
 const _channelName = 'تذكيرات المهام';
 const _channelDesc = 'إشعارات تذكير بتاريخ ووقت المهمة';
+const _dueSound = RawResourceAndroidNotificationSound('task_due');
+
+// قناة التنبيه المبكر (المهمة تقترب) — صوت مختلف وأخف
+const _approachingChannelId = 'tasks_approaching_v1';
+const _approachingChannelName = 'تنبيه اقتراب المهمة';
+const _approachingChannelDesc = 'إشعار صوتي قبل وقت المهمة بفترة يحددها المستخدم';
+const _approachingSound = RawResourceAndroidNotificationSound('task_approaching');
 
 // قناة خاصة لإبقاء التطبيق حياً في الخلفية (هواوي وشياومي)
 const _keepAliveChannelId = 'tasks_keepalive';
 const _keepAliveChannelName = 'خدمة التذكيرات';
 const _keepAliveNotifId = 9999;
+
+/// خيارات مدة التنبيه المبكر بالدقائق (0 = بدون تنبيه مبكر)
+const List<int> leadMinutesOptions = [0, 10, 15, 30, 60, 120];
 
 /// إعداد الإشعارات — مقسّم لخطوات مستقلة حتى لا يفشل الكل بسبب خطأ واحد
 Future<void> setupNotifications() async {
@@ -83,6 +94,23 @@ Future<void> setupNotifications() async {
           description: _channelDesc,
           importance: Importance.max,
           playSound: true,
+          sound: _dueSound,
+          enableVibration: true,
+          showBadge: true,
+        ),
+      );
+    } catch (_) {}
+
+    // قناة التنبيه المبكر — صوت مختلف يميّز "اقتراب الموعد" عن "حان الوقت"
+    try {
+      await androidPlugin.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _approachingChannelId,
+          _approachingChannelName,
+          description: _approachingChannelDesc,
+          importance: Importance.max,
+          playSound: true,
+          sound: _approachingSound,
           enableVibration: true,
           showBadge: true,
         ),
@@ -171,14 +199,14 @@ Future<String> _getLocalTimezone() async {
   return 'Asia/Amman';
 }
 
-/// إشعار اختبار فوري
+/// إشعار اختبار فوري (صوت "حان الوقت")
 Future<void> showTestNotification() async {
   await setupNotifications();
   try {
     await _notifications.show(
       7001,
-      '✅ اختبار الإشعار',
-      'الإشعارات تعمل في مهامي الملوّنة',
+      '✅ اختبار صوت: حان وقت المهمة',
+      'هكذا سيصلك التنبيه عند حلول وقت المهمة بالضبط',
       const NotificationDetails(
         android: AndroidNotificationDetails(
           _channelId,
@@ -187,6 +215,7 @@ Future<void> showTestNotification() async {
           importance: Importance.max,
           priority: Priority.high,
           playSound: true,
+          sound: _dueSound,
           enableVibration: true,
           icon: '@drawable/app_icon',
         ),
@@ -195,65 +224,165 @@ Future<void> showTestNotification() async {
   } catch (_) {}
 }
 
-/// جدولة إشعار مهمة
+/// إشعار اختبار فوري (صوت "المهمة تقترب")
+Future<void> showApproachingTestNotification() async {
+  await setupNotifications();
+  try {
+    await _notifications.show(
+      7002,
+      '🟡 اختبار صوت: المهمة تقترب',
+      'هكذا سيصلك التنبيه المبكر قبل موعد المهمة بالمدة التي تحددها',
+      const NotificationDetails(
+        android: AndroidNotificationDetails(
+          _approachingChannelId,
+          _approachingChannelName,
+          channelDescription: _approachingChannelDesc,
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+          sound: _approachingSound,
+          enableVibration: true,
+          icon: '@drawable/app_icon',
+        ),
+      ),
+    );
+  } catch (_) {}
+}
+
+/// نص بيان المهمة الكامل الذي يظهر داخل الإشعار (العنوان + الحالة + الملاحظة)
+String _taskStatementBody(AppTask task) {
+  final parts = <String>[];
+  parts.add('الحالة الحالية: ${task.status.label}');
+  if (task.note.trim().isNotEmpty) {
+    parts.add(task.note.trim());
+  } else {
+    parts.add('لا تنسَ متابعة هذه المهمة في وقتها.');
+  }
+  return parts.join('\n');
+}
+
+/// جدولة إشعار مهمة: تنبيه مبكر عند الاقتراب (اختياري) + تنبيه عند حلول الوقت
 Future<void> scheduleTaskNotification(AppTask task) async {
   if (task.status == TaskStatus.done || task.reminderAt == null) return;
   await setupNotifications();
   if (!_notificationsReady) return;
 
   final when = task.reminderAt!;
-  if (!when.isAfter(DateTime.now())) return;
+  final now = DateTime.now();
 
+  // ── 1) التنبيه عند حلول الوقت بالضبط ──
   await _notifications.cancel(task.notificationId);
-
-  final scheduledAt = tz.TZDateTime.from(when, tz.local);
-
-  final details = NotificationDetails(
-    android: AndroidNotificationDetails(
-      _channelId,
-      _channelName,
-      channelDescription: _channelDesc,
-      importance: Importance.max,
-      priority: Priority.high,
-      playSound: true,
-      enableVibration: true,
-      icon: '@drawable/app_icon',
-      largeIcon: const DrawableResourceAndroidBitmap('@drawable/app_icon'),
-      styleInformation: BigTextStyleInformation(
-        task.note.isNotEmpty ? task.note : 'لا تنسَ متابعة المهمة في وقتها.',
-        contentTitle: '🔔 تذكير: ${task.title}',
-        summaryText: task.status.label,
+  if (when.isAfter(now)) {
+    final scheduledAt = tz.TZDateTime.from(when, tz.local);
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        _channelId,
+        _channelName,
+        channelDescription: _channelDesc,
+        importance: Importance.max,
+        priority: Priority.high,
+        playSound: true,
+        sound: _dueSound,
+        enableVibration: true,
+        icon: '@drawable/app_icon',
+        largeIcon: const DrawableResourceAndroidBitmap('@drawable/app_icon'),
+        styleInformation: BigTextStyleInformation(
+          _taskStatementBody(task),
+          contentTitle: '🔔 حان وقت: ${task.title}',
+          summaryText: formatDateTime(when),
+        ),
+        category: AndroidNotificationCategory.reminder,
+        ticker: task.title,
+        autoCancel: true,
+        ongoing: false,
+        fullScreenIntent: false,
+        visibility: NotificationVisibility.public,
       ),
-      category: AndroidNotificationCategory.reminder,
-      ticker: task.title,
-      autoCancel: true,
-      ongoing: false,
-      // تأكد إظهار الإشعار حتى لو التطبيق في الخلفية
-      fullScreenIntent: false,
-      visibility: NotificationVisibility.public,
-    ),
-  );
-
-  Future<void> trySchedule(AndroidScheduleMode mode) {
-    return _notifications.zonedSchedule(
-      task.notificationId,
-      '🔔 تذكير: ${task.title}',
-      task.note.isNotEmpty ? task.note : 'لا تنسَ متابعة المهمة في وقتها.',
-      scheduledAt,
-      details,
-      androidScheduleMode: mode,
-      uiLocalNotificationDateInterpretation:
-          UILocalNotificationDateInterpretation.absoluteTime,
-      payload: task.id,
     );
+
+    Future<void> trySchedule(AndroidScheduleMode mode) {
+      return _notifications.zonedSchedule(
+        task.notificationId,
+        '🔔 حان وقت: ${task.title}',
+        _taskStatementBody(task),
+        scheduledAt,
+        details,
+        androidScheduleMode: mode,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        payload: task.id,
+      );
+    }
+
+    try {
+      await trySchedule(AndroidScheduleMode.exactAllowWhileIdle);
+    } catch (_) {
+      try {
+        await trySchedule(AndroidScheduleMode.inexactAllowWhileIdle);
+      } catch (_) {}
+    }
   }
 
-  try {
-    await trySchedule(AndroidScheduleMode.exactAllowWhileIdle);
-  } catch (_) {
-    try {
-      await trySchedule(AndroidScheduleMode.inexactAllowWhileIdle);
-    } catch (_) {}
+  // ── 2) التنبيه المبكر عند اقتراب الموعد (إن كان مفعّلاً) ──
+  await _notifications.cancel(task.earlyNotificationId);
+  if (task.leadMinutes > 0) {
+    final earlyAt = when.subtract(Duration(minutes: task.leadMinutes));
+    if (earlyAt.isAfter(now)) {
+      final earlyScheduledAt = tz.TZDateTime.from(earlyAt, tz.local);
+      final leadLabel = task.leadMinutes >= 60
+          ? '${task.leadMinutes ~/ 60} ساعة'
+          : '${task.leadMinutes} دقيقة';
+      final earlyTitle = '🟡 تقترب: ${task.title}';
+      final earlyBody =
+          'تبدأ خلال $leadLabel (الساعة ${formatDateTime(when)})\n${_taskStatementBody(task)}';
+
+      final earlyDetails = NotificationDetails(
+        android: AndroidNotificationDetails(
+          _approachingChannelId,
+          _approachingChannelName,
+          channelDescription: _approachingChannelDesc,
+          importance: Importance.max,
+          priority: Priority.high,
+          playSound: true,
+          sound: _approachingSound,
+          enableVibration: true,
+          icon: '@drawable/app_icon',
+          largeIcon: const DrawableResourceAndroidBitmap('@drawable/app_icon'),
+          styleInformation: BigTextStyleInformation(
+            earlyBody,
+            contentTitle: earlyTitle,
+            summaryText: 'تنبيه مبكر',
+          ),
+          category: AndroidNotificationCategory.reminder,
+          ticker: task.title,
+          autoCancel: true,
+          fullScreenIntent: false,
+          visibility: NotificationVisibility.public,
+        ),
+      );
+
+      Future<void> tryScheduleEarly(AndroidScheduleMode mode) {
+        return _notifications.zonedSchedule(
+          task.earlyNotificationId,
+          earlyTitle,
+          earlyBody,
+          earlyScheduledAt,
+          earlyDetails,
+          androidScheduleMode: mode,
+          uiLocalNotificationDateInterpretation:
+              UILocalNotificationDateInterpretation.absoluteTime,
+          payload: task.id,
+        );
+      }
+
+      try {
+        await tryScheduleEarly(AndroidScheduleMode.exactAllowWhileIdle);
+      } catch (_) {
+        try {
+          await tryScheduleEarly(AndroidScheduleMode.inexactAllowWhileIdle);
+        } catch (_) {}
+      }
+    }
   }
 }
 
@@ -270,6 +399,7 @@ Future<void> cancelTaskNotification(AppTask task) async {
   await setupNotifications();
   if (!_notificationsReady) return;
   await _notifications.cancel(task.notificationId);
+  await _notifications.cancel(task.earlyNotificationId);
 }
 
 // ─────────────────────────────── App Entry ───────────────────────────────────
@@ -298,38 +428,74 @@ class TaskStatusReminderApp extends StatelessWidget {
       ],
       theme: ThemeData(
         useMaterial3: true,
-        scaffoldBackgroundColor: const Color(0xFFF8FAF7),
+        scaffoldBackgroundColor: const Color(0xFFF4F6FA),
         colorScheme: const ColorScheme.light(
-          primary: Color(0xFF15803D),
-          secondary: Color(0xFFF97316),
-          tertiary: Color(0xFFDC2626),
+          primary: Color(0xFF0F2A4A),
+          onPrimary: Colors.white,
+          secondary: Color(0xFF0EA5A8),
+          tertiary: Color(0xFFD4AF37),
           surface: Colors.white,
         ),
         appBarTheme: const AppBarTheme(
           elevation: 0,
           centerTitle: false,
-          backgroundColor: Color(0xFFF8FAF7),
-          foregroundColor: Color(0xFF172A16),
+          backgroundColor: Color(0xFFF4F6FA),
+          foregroundColor: Color(0xFF0F2A4A),
+          titleTextStyle: TextStyle(
+            color: Color(0xFF0F2A4A),
+            fontSize: 19,
+            fontWeight: FontWeight.w900,
+          ),
         ),
         cardTheme: CardThemeData(
           color: Colors.white,
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
-            side: const BorderSide(color: Color(0xFFE2E8D8)),
+            side: const BorderSide(color: Color(0xFFE3E8F0)),
           ),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: const Color(0xFFF8FAF7),
+          fillColor: const Color(0xFFF4F6FA),
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0xFFD9E4D2)),
+            borderSide: const BorderSide(color: Color(0xFFDCE3EE)),
           ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(14),
-            borderSide: const BorderSide(color: Color(0xFFD9E4D2)),
+            borderSide: const BorderSide(color: Color(0xFFDCE3EE)),
           ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(14),
+            borderSide: const BorderSide(color: Color(0xFF0EA5A8), width: 1.6),
+          ),
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF0F2A4A),
+            foregroundColor: Colors.white,
+          ),
+        ),
+        floatingActionButtonTheme: const FloatingActionButtonThemeData(
+          backgroundColor: Color(0xFF0EA5A8),
+          foregroundColor: Colors.white,
+        ),
+        navigationBarTheme: NavigationBarThemeData(
+          backgroundColor: Colors.white,
+          indicatorColor: const Color(0xFF0EA5A8).withValues(alpha: 0.15),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: states.contains(WidgetState.selected)
+                    ? const Color(0xFF0F2A4A)
+                    : const Color(0xFF94A3B8),
+              )),
+          iconTheme: WidgetStateProperty.resolveWith((states) => IconThemeData(
+                color: states.contains(WidgetState.selected)
+                    ? const Color(0xFF0F2A4A)
+                    : const Color(0xFF94A3B8),
+              )),
         ),
       ),
       home: const Directionality(
@@ -361,6 +527,7 @@ class AppTask {
     required this.createdAt,
     this.reminderAt,
     this.priority = 0,
+    this.leadMinutes = 15,
   });
 
   final String id;
@@ -370,12 +537,20 @@ class AppTask {
   DateTime createdAt;
   DateTime? reminderAt;
   int priority; // 0=عادي، 1=مهم، 2=عاجل
+  int leadMinutes; // مدة التنبيه المبكر بالدقائق، 0 = بدون تنبيه مبكر
 
-  int get notificationId {
+  int get _baseNotificationId {
     final parsed = int.tryParse(id);
-    if (parsed != null) return parsed % 2147483647;
-    return id.codeUnits.fold<int>(0, (sum, unit) => (sum + unit) % 2147483647);
+    final raw = parsed ??
+        id.codeUnits.fold<int>(0, (sum, unit) => sum + unit);
+    return raw.abs() % 1000000000;
   }
+
+  /// إشعار حلول الوقت
+  int get notificationId => _baseNotificationId * 2;
+
+  /// إشعار اقتراب الموعد (مختلف عن الأول دائماً لمنع التعارض)
+  int get earlyNotificationId => _baseNotificationId * 2 + 1;
 
   bool get isOverdue =>
       reminderAt != null &&
@@ -390,6 +565,7 @@ class AppTask {
         'createdAt': createdAt.toIso8601String(),
         'reminderAt': reminderAt?.toIso8601String(),
         'priority': priority,
+        'leadMinutes': leadMinutes,
       };
 
   factory AppTask.fromJson(Map<String, dynamic> json) {
@@ -407,6 +583,7 @@ class AppTask {
           ? null
           : DateTime.tryParse(json['reminderAt'] as String),
       priority: (json['priority'] as int?) ?? 0,
+      leadMinutes: (json['leadMinutes'] as int?) ?? 15,
     );
   }
 }
@@ -622,11 +799,24 @@ class _TasksHomeState extends State<TasksHome> {
               SnackBar(
                 content: Text(
                   _notificationsReady
-                      ? 'تم إرسال الإشعار — إن لم يظهر فعّله من إعدادات الهاتف'
+                      ? 'تم إرسال إشعار تجريبي بصوت "حان الوقت" — إن لم يظهر فعّله من إعدادات الهاتف'
                       : 'فشل تهيئة الإشعارات — اذهب لإعدادات الهاتف وفعّل إشعارات التطبيق',
                 ),
                 backgroundColor: _notificationsReady ? null : const Color(0xFFDC2626),
                 duration: const Duration(seconds: 5),
+              ),
+            );
+          }
+        },
+        onTestApproaching: () async {
+          _notificationsReady = false;
+          await setupNotifications();
+          await showApproachingTestNotification();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('تم إرسال إشعار تجريبي بصوت "المهمة تقترب"'),
+                duration: Duration(seconds: 4),
               ),
             );
           }
@@ -717,6 +907,7 @@ class _TasksPage extends StatelessWidget {
     required this.onDelete,
     required this.onStatus,
     required this.onTestNotification,
+    required this.onTestApproaching,
     this.onDeleteDone,
   });
 
@@ -732,6 +923,7 @@ class _TasksPage extends StatelessWidget {
   final ValueChanged<AppTask> onDelete;
   final void Function(AppTask, TaskStatus) onStatus;
   final VoidCallback onTestNotification;
+  final VoidCallback onTestApproaching;
   final VoidCallback? onDeleteDone;
 
   @override
@@ -759,6 +951,7 @@ class _TasksPage extends StatelessWidget {
               onSortMode: onSortMode,
               onDeleteDone: onDeleteDone,
               onTestNotification: onTestNotification,
+              onTestApproaching: onTestApproaching,
             ),
           ),
         ),
@@ -779,12 +972,15 @@ class _TasksPage extends StatelessWidget {
             sliver: SliverList.separated(
               itemCount: tasks.length,
               separatorBuilder: (_, __) => const SizedBox(height: 10),
-              itemBuilder: (_, i) => _TaskCard(
-                task: tasks[i],
-                screenWidth: w,
-                onEdit: () => onEdit(tasks[i]),
-                onDelete: () => onDelete(tasks[i]),
-                onStatus: (s) => onStatus(tasks[i], s),
+              itemBuilder: (_, i) => _FadeInItem(
+                index: i,
+                child: _TaskCard(
+                  task: tasks[i],
+                  screenWidth: w,
+                  onEdit: () => onEdit(tasks[i]),
+                  onDelete: () => onDelete(tasks[i]),
+                  onStatus: (s) => onStatus(tasks[i], s),
+                ),
               ),
             ),
           ),
@@ -805,6 +1001,7 @@ class _FilterBar extends StatelessWidget {
     required this.onSortMode,
     required this.onDeleteDone,
     required this.onTestNotification,
+    required this.onTestApproaching,
   });
 
   final TaskStatus? filter;
@@ -814,6 +1011,7 @@ class _FilterBar extends StatelessWidget {
   final ValueChanged<SortMode> onSortMode;
   final VoidCallback? onDeleteDone;
   final VoidCallback onTestNotification;
+  final VoidCallback onTestApproaching;
 
   @override
   Widget build(BuildContext context) {
@@ -856,8 +1054,13 @@ class _FilterBar extends StatelessWidget {
               children: [
                 _ToolIcon(
                   icon: Icons.notifications_active_outlined,
-                  tooltip: 'اختبار الإشعار',
+                  tooltip: 'اختبار صوت "حان الوقت"',
                   onTap: onTestNotification,
+                ),
+                _ToolIcon(
+                  icon: Icons.alarm_add_outlined,
+                  tooltip: 'اختبار صوت "تقترب المهمة"',
+                  onTap: onTestApproaching,
                 ),
                 _SortButton(current: sortMode, onChanged: onSortMode),
               ],
@@ -986,13 +1189,13 @@ class _SummaryPanel extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(24),
         gradient: const LinearGradient(
-          colors: [Color(0xFF0F4C2A), Color(0xFF1a6b3a)],
+          colors: [Color(0xFF0B1F3A), Color(0xFF0F3D52), Color(0xFF0EA5A8)],
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
         ),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF15803D).withValues(alpha: 0.3),
+            color: const Color(0xFF0F2A4A).withValues(alpha: 0.3),
             blurRadius: 16,
             offset: const Offset(0, 6),
           ),
@@ -1102,7 +1305,7 @@ class _SummaryPanel extends StatelessWidget {
                   value: progress,
                   minHeight: 6,
                   backgroundColor: Colors.white.withValues(alpha: 0.15),
-                  valueColor: const AlwaysStoppedAnimation(Color(0xFF4ADE80)),
+                  valueColor: const AlwaysStoppedAnimation(Color(0xFFD4AF37)),
                 ),
               ),
             ],
@@ -1203,7 +1406,7 @@ class _SortButton extends StatelessWidget {
                           m == current
                               ? Icons.radio_button_checked_rounded
                               : Icons.radio_button_off_rounded,
-                          color: const Color(0xFF15803D),
+                          color: const Color(0xFF0EA5A8),
                         ),
                         title: Text(m.label),
                         selected: m == current,
@@ -1224,6 +1427,47 @@ class _SortButton extends StatelessWidget {
           padding: const EdgeInsets.all(8),
           child: Icon(Icons.sort_rounded, size: 22, color: const Color(0xFF475569)),
         ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// FADE-IN ITEM — حركة دخول خفيفة ومتدرجة لبطاقات المهام
+// ═══════════════════════════════════════════════════════════════════════════════
+class _FadeInItem extends StatefulWidget {
+  const _FadeInItem({required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  @override
+  State<_FadeInItem> createState() => _FadeInItemState();
+}
+
+class _FadeInItemState extends State<_FadeInItem> {
+  bool _visible = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final delay = Duration(milliseconds: 35 * widget.index.clamp(0, 10));
+    Future.delayed(delay, () {
+      if (mounted) setState(() => _visible = true);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedOpacity(
+      opacity: _visible ? 1 : 0,
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOut,
+      child: AnimatedSlide(
+        offset: _visible ? Offset.zero : const Offset(0, 0.04),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+        child: widget.child,
       ),
     );
   }
@@ -1448,40 +1692,72 @@ class _TaskCard extends StatelessWidget {
 
                 // ── شريط المعلومات: التاريخ ──
                 if (task.reminderAt != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 5),
-                    decoration: BoxDecoration(
-                      color: task.isOverdue
-                          ? const Color(0xFFDC2626).withValues(alpha: 0.08)
-                          : const Color(0xFF15803D).withValues(alpha: 0.07),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          task.isOverdue
-                              ? Icons.warning_amber_rounded
-                              : Icons.alarm_rounded,
-                          size: 13,
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 5),
+                        decoration: BoxDecoration(
                           color: task.isOverdue
-                              ? const Color(0xFFDC2626)
-                              : const Color(0xFF15803D),
+                              ? const Color(0xFFDC2626).withValues(alpha: 0.08)
+                              : const Color(0xFF0EA5A8).withValues(alpha: 0.09),
+                          borderRadius: BorderRadius.circular(99),
                         ),
-                        const SizedBox(width: 5),
-                        Text(
-                          formatDateTime(task.reminderAt!),
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: task.isOverdue
-                                ? const Color(0xFFDC2626)
-                                : const Color(0xFF15803D),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              task.isOverdue
+                                  ? Icons.warning_amber_rounded
+                                  : Icons.alarm_rounded,
+                              size: 13,
+                              color: task.isOverdue
+                                  ? const Color(0xFFDC2626)
+                                  : const Color(0xFF0D9488),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              '${formatDateTime(task.reminderAt!)} • ${formatRelative(task.reminderAt!)}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: task.isOverdue
+                                    ? const Color(0xFFDC2626)
+                                    : const Color(0xFF0D9488),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (task.leadMinutes > 0 &&
+                          task.status != TaskStatus.done)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 9, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD4AF37).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(Icons.notifications_active_rounded,
+                                  size: 12, color: Color(0xFFB8860B)),
+                              const SizedBox(width: 4),
+                              Text(
+                                'تنبيه قبل ${task.leadMinutes >= 60 ? '${task.leadMinutes ~/ 60} ساعة' : '${task.leadMinutes} د'}',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFFB8860B),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ],
-                    ),
+                    ],
                   ),
 
                 const SizedBox(height: 4),
@@ -1536,13 +1812,13 @@ class _EmptyState extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: const Color(0xFF15803D).withValues(alpha: 0.08),
+              color: const Color(0xFF0EA5A8).withValues(alpha: 0.08),
               shape: BoxShape.circle,
             ),
             child: const Icon(
               Icons.task_alt_rounded,
               size: 44,
-              color: Color(0xFF15803D),
+              color: Color(0xFF0EA5A8),
             ),
           ),
           const SizedBox(height: 16),
@@ -1588,6 +1864,7 @@ class _TaskSheetState extends State<_TaskSheet> {
   late final TextEditingController noteController;
   late TaskStatus status;
   late int priority;
+  late int leadMinutes;
   DateTime? reminderAt;
 
   @override
@@ -1597,6 +1874,7 @@ class _TaskSheetState extends State<_TaskSheet> {
     noteController = TextEditingController(text: widget.task?.note ?? '');
     status = widget.task?.status ?? TaskStatus.requiredTask;
     priority = widget.task?.priority ?? 0;
+    leadMinutes = widget.task?.leadMinutes ?? 15;
     reminderAt = widget.task?.reminderAt;
   }
 
@@ -1644,6 +1922,7 @@ class _TaskSheetState extends State<_TaskSheet> {
         createdAt: widget.task?.createdAt ?? DateTime.now(),
         reminderAt: reminderAt,
         priority: priority,
+        leadMinutes: leadMinutes,
       ),
     );
   }
@@ -1813,12 +2092,12 @@ class _TaskSheetState extends State<_TaskSheet> {
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
                   color: reminderAt != null
-                      ? const Color(0xFF15803D).withValues(alpha: 0.07)
+                      ? const Color(0xFF0EA5A8).withValues(alpha: 0.07)
                       : const Color(0xFFF8FAF7),
                   borderRadius: BorderRadius.circular(14),
                   border: Border.all(
                     color: reminderAt != null
-                        ? const Color(0xFF15803D).withValues(alpha: 0.3)
+                        ? const Color(0xFF0EA5A8).withValues(alpha: 0.3)
                         : const Color(0xFFD9E4D2),
                   ),
                 ),
@@ -1827,7 +2106,7 @@ class _TaskSheetState extends State<_TaskSheet> {
                     Icon(
                       Icons.alarm_rounded,
                       color: reminderAt != null
-                          ? const Color(0xFF15803D)
+                          ? const Color(0xFF0EA5A8)
                           : const Color(0xFF94A3B8),
                     ),
                     const SizedBox(width: 10),
@@ -1839,7 +2118,7 @@ class _TaskSheetState extends State<_TaskSheet> {
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
                           color: reminderAt != null
-                              ? const Color(0xFF15803D)
+                              ? const Color(0xFF0EA5A8)
                               : const Color(0xFF94A3B8),
                         ),
                       ),
@@ -1854,6 +2133,60 @@ class _TaskSheetState extends State<_TaskSheet> {
                 ),
               ),
             ),
+
+            // ── تنبيه مبكر قبل الموعد ──
+            if (reminderAt != null) ...[
+              const SizedBox(height: 14),
+              const Text('🔔 تنبيه مبكر قبل الموعد بـ',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final m in leadMinutesOptions)
+                    GestureDetector(
+                      onTap: () => setState(() => leadMinutes = m),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 9),
+                        decoration: BoxDecoration(
+                          color: leadMinutes == m
+                              ? const Color(0xFF0EA5A8)
+                              : const Color(0xFF0EA5A8).withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(99),
+                          border: Border.all(
+                            color: leadMinutes == m
+                                ? const Color(0xFF0EA5A8)
+                                : const Color(0xFF0EA5A8).withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Text(
+                          m == 0
+                              ? 'بدون'
+                              : (m >= 60 ? '${m ~/ 60} ساعة' : '$m د'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: leadMinutes == m
+                                ? Colors.white
+                                : const Color(0xFF0EA5A8),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              if (leadMinutes > 0) ...[
+                const SizedBox(height: 6),
+                Text(
+                  'سيصلك تنبيه صوتي منفصل قبل الموعد بـ ${leadMinutes >= 60 ? '${leadMinutes ~/ 60} ساعة' : '$leadMinutes دقيقة'}، بالإضافة إلى تنبيه عند حلول الوقت.',
+                  style: const TextStyle(
+                      color: Color(0xFF64748B), fontSize: 11.5, height: 1.4),
+                ),
+              ],
+            ],
 
             const SizedBox(height: 20),
 
@@ -1908,7 +2241,7 @@ class _DeveloperPageState extends State<_DeveloperPage> {
         // ── النسخ الاحتياطي ──
         _SettingsCard(
           icon: Icons.backup_rounded,
-          iconColor: const Color(0xFF15803D),
+          iconColor: const Color(0xFF0EA5A8),
           title: 'النسخ الاحتياطي',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1988,7 +2321,7 @@ class _DeveloperPageState extends State<_DeveloperPage> {
                         width: 22,
                         height: 22,
                         decoration: const BoxDecoration(
-                          color: Color(0xFF15803D),
+                          color: Color(0xFF0EA5A8),
                           shape: BoxShape.circle,
                         ),
                         child: Center(
@@ -2205,4 +2538,23 @@ String formatDateTime(DateTime value) {
   final mo = value.month.toString().padLeft(2, '0');
   final d = value.day.toString().padLeft(2, '0');
   return '${value.year}/$mo/$d  $h:$m';
+}
+
+/// نص مختصر للوقت المتبقي أو المتأخر عن موعد التذكير
+String formatRelative(DateTime value) {
+  final diff = value.difference(DateTime.now());
+  final isPast = diff.isNegative;
+  final d = diff.abs();
+  String span;
+  if (d.inMinutes < 1) {
+    span = 'الآن';
+  } else if (d.inHours < 1) {
+    span = '${d.inMinutes} د';
+  } else if (d.inDays < 1) {
+    span = '${d.inHours} س';
+  } else {
+    span = '${d.inDays} يوم';
+  }
+  if (span == 'الآن') return 'الآن';
+  return isPast ? 'متأخر $span' : 'باقي $span';
 }
