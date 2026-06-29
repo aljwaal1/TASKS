@@ -1,4 +1,0 @@
-V4 metadata applied.
-Workflow unchanged.
-APK path unchanged.
-Existing app logic preserved.
