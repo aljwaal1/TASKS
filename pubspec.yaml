@@ -2,7 +2,7 @@ name: task_status_reminder
 description: Arabic task manager with required, in progress, completed statuses and background reminders.
 publish_to: "none"
 
-version: 1.2.0+3
+version: 4.0.0+4
 
 environment:
   sdk: ">=3.3.0 <4.0.0"
